@@ -10,6 +10,8 @@ ZODIACS = [
     "blizenci", "vahy", "vodnar", "rak", "stir", "ryby"
 ]
 
+PERCENTAGES = ["100%", "80%", "60%", "40%", "20%", "0%", "-20%", "-40%", "-60%", "-80%", "-100%"]
+
 
 def fetch_zodiac_data(base_url, zodiac_signs):
     """
@@ -38,6 +40,24 @@ def fetch_zodiac_data(base_url, zodiac_signs):
     return horoscope_data
 
 
+def format_compatibility_data(horoscope_data, percentages):
+    """
+    Formats the horoscope compatibility data to be more readable.
+
+    This function takes in the raw horoscope data and the corresponding percentages, and
+    outputs a formatted version of the data.
+    """
+    formatted_data = {}
+
+    for sign, values in horoscope_data.items():
+        formatted_values = [f"{percent}: {value}" for percent, value in zip(percentages, values)]
+        formatted_data[sign] = formatted_values
+
+    return formatted_data
+
+
 if __name__ == '__main__':
-    compatibility_data = fetch_zodiac_data(BASE_URL, ZODIACS)
-    print(compatibility_data.items())
+    raw_compatibility_data = fetch_zodiac_data(BASE_URL, ZODIACS)
+    formatted_compatibility_data = format_compatibility_data(raw_compatibility_data, PERCENTAGES)
+    for sign, data in formatted_compatibility_data.items():
+        print(f"{sign.capitalize()}: {data}")
