@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import unicodedata
 import requests
 from bs4 import BeautifulSoup
 from slack_bolt import App
@@ -65,6 +66,7 @@ def fetch_zodiac_data(base_url, zodiac_signs):
 
     return horoscope_data
 
+
 def format_compatibility_data(horoscope_data, percentages, names_zodiacs):
     """
     Formats the horoscope compatibility data into a DataFrame.
@@ -82,8 +84,6 @@ def format_compatibility_data(horoscope_data, percentages, names_zodiacs):
                 part = part.strip().lower()
                 if part in names_zodiacs and names_zodiacs[part]:
                     names.append(",".join(names_zodiacs[part]))
-                else:
-                    names.append(part.capitalize())
             formatted_values.append(",".join(names))
         df_data[sign.capitalize()] = formatted_values
 
@@ -103,23 +103,33 @@ def split_dataframe(df):
     df2 = df.iloc[:, split_point:]
     return df1, df2
 
+
 def format_table_for_slack(df):
     """
     Formats the DataFrame into a tabulated string for Slack with dashed lines under headers.
     """
     # Convert DataFrame to string with tabulate using 'plain' format
-    table_str = tabulate(df, headers='keys', tablefmt='plain')
-    
-    # Split lines for headers and add dashes
-    lines = table_str.split('\n')
-    max_length = max(len(line) for line in lines)
-    header_line = lines[0]
-    dashed_line = '-' * max_length
-    
-    # Reconstruct table with dashed line under headers
-    formatted_table = '\n'.join([dashed_line, header_line, dashed_line] + lines[1:])
-    
-    return formatted_table
+    table_str = tabulate(df, headers='keys', tablefmt='simple')
+
+    return table_str
+
+
+def send_intro_message(channel_id, summary):
+    try:
+        intro_message = (
+            f">*Vztah znamení k ostatním znamení ke dni: _{time.strftime('%d.%m.%Y')}_*\n"
+            f"{summary}\n"
+        )
+        response = client.chat_postMessage(
+            channel=channel_id,
+            text=intro_message
+        )
+        print(f"Message sent to {channel_id}: {response['ts']}")
+
+    except SlackApiError as e:
+        print(f"Error sending message to Slack: {e.response['error']}")
+
+
 def send_table_to_slack(channel_id, table_str):
     """
     Sends a tabulated string to a Slack channel.
@@ -127,30 +137,79 @@ def send_table_to_slack(channel_id, table_str):
     try:
         # Split table into multiple messages if necessary
         message_chunks = [table_str[i:i + 4000] for i in range(0, len(table_str), 4000)]
-        
+
         for chunk in message_chunks:
             response = client.chat_postMessage(
                 channel=channel_id,
                 text=f"\n```\n{chunk}\n```"
             )
             print(f"Message sent to {channel_id}: {response['ts']}")
-    
-    except SlackApiError as e:
-        print(f"Error sending message to Slack: {e.response['error']}")
-
-
-def send_intro_message(channel_id):
-    try:
-        intro_message = (
-                    f">*Vztah znamení k ostatním znamení ke dni: _{time.strftime('%d.%m.%Y')}_*\n")
-        response = client.chat_postMessage(
-                    channel=channel_id,
-                    text=intro_message
-        )
-        print(f"Message sent to {channel_id}: {response['ts']}")
 
     except SlackApiError as e:
         print(f"Error sending message to Slack: {e.response['error']}")
+
+
+def _remove_diacritics(text):
+    """
+    Removes diacritics (accents) from the text.
+    """
+    return ''.join(c for c in unicodedata.normalize('NFD', text)
+                   if unicodedata.category(c) != 'Mn')
+
+
+def generate_relationship_summary(df, names_zodiacs, percentage, relationship_type):
+    """
+    Generates a summary of relationships based on specified compatibility percentage.
+
+    :param df: DataFrame containing compatibility data
+    :param names_zodiacs: Dictionary mapping zodiac signs to names
+    :param percentage: Compatibility percentage to look for (100 or -100)
+    :param relationship_type: Type of relationship ("kamarád" or "nepřítel")
+    :return: Summary of relationships
+    """
+    relationships_dict = {}
+
+    # Iterate over each zodiac sign and corresponding names
+    for zodiac, names in names_zodiacs.items():
+        zodiac_no_diacritics = _remove_diacritics(zodiac).capitalize()
+        if zodiac_no_diacritics in df.columns:
+            column_data = df[zodiac_no_diacritics]
+            for name in names:
+                for percent, related_names in column_data.items():
+                    if int(percent[:-1]) == percentage:
+                        related_names_list = [n.strip() for n in related_names.split(',') if n]
+                        if name in related_names_list:
+                            related_names_list.remove(name)
+                        if related_names_list:
+                            if name not in relationships_dict:
+                                relationships_dict[name] = set()
+                            relationships_dict[name].update(related_names_list)
+
+    # Create a set of unique relationships
+    unique_relationships = set()
+    for name, related in relationships_dict.items():
+        for person in related:
+            relationship = tuple(sorted([name, person]))
+            unique_relationships.add(relationship)
+
+    # Aggregate relationships
+    aggregated_relationships = {}
+    for relationship in unique_relationships:
+        key = relationship[0]
+        if key not in aggregated_relationships:
+            aggregated_relationships[key] = set()
+        aggregated_relationships[key].add(relationship[1])
+
+    # Create summary lines
+    summary_lines = []
+    for name, related in aggregated_relationships.items():
+        related_string = ', '.join(sorted(related))
+        if relationship_type == "nepřítel":
+            summary_lines.append(f"- {name} je s {related_string} dnes {relationship_type}!")
+        else:
+            summary_lines.append(f"+ {name} je s {related_string} dnes {relationship_type}!")
+
+    return "\n".join(summary_lines)
 
 
 def send_daily_horoscope():
@@ -163,7 +222,15 @@ def send_daily_horoscope():
     # Split DataFrame into two parts for better readability
     df1, df2 = split_dataframe(formatted_compatibility_data)
 
-    send_intro_message(SLACK_CHANNEL_ID)
+    # Generate summaries for friends and enemies
+    friends_summary = generate_relationship_summary(formatted_compatibility_data, NAMES_ZODIACS, 100, "kamarád")
+    enemies_summary = generate_relationship_summary(formatted_compatibility_data, NAMES_ZODIACS, -100, "nepřítel")
+
+    # Combine summaries
+    combined_summary = f"Kamarádi:\n{friends_summary}\n\nNepřátelé:\n{enemies_summary}"
+
+    # Send intro message with summaries
+    send_intro_message(SLACK_CHANNEL_ID, combined_summary)
 
     # Format DataFrame parts into tabulated strings
     table_str1 = format_table_for_slack(df1)
