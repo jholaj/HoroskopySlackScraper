@@ -225,7 +225,7 @@ def send_message_and_table(channel_id, summary, image_path):
         response_file = client.files_upload_v2(
             channels=channel_id,
             file=image_path,
-            title="Horoscope Compatibility Table",
+            title="Horoskopy",
         )
         print(f"Image sent to {channel_id}: {response_file['file']['id']}")
 
@@ -273,7 +273,7 @@ def generate_relationship_summary(df, names_zodiacs, percentage, relationship_ty
         key = relationship[0]
         if key not in aggregated_relationships:
             aggregated_relationships[key] = set()
-        aggregated_relationships[key].add(relationship[1])
+        aggregated_relationships[key].update(relationship[1:])
 
     summary_lines = []
     for name, related in aggregated_relationships.items():
